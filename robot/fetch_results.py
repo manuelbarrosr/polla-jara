@@ -2,23 +2,20 @@
 """
 Robot de la Polla Mundial 2026
 -------------------------------
-Baja los partidos de PLAYOFFS del Mundial desde football-data.org
-y los sube/actualiza en la tabla 'matches' de Supabase.
+1) Baja los partidos de PLAYOFFS y los guarda en 'matches'.
+2) Baja los 48 equipos del torneo y los guarda en 'teams'
+   (para los dropdowns de campeón/subcampeón/3º).
 
 Corre solo (GitHub Actions) cada 15 minutos.
-NO guarda nada sensible en el código: todo viene de variables de entorno.
 """
 
 import os
 import sys
 import requests
 
-# ---------------------------------------------------------------------
-# 1) Credenciales (vienen de los "secrets" de GitHub, nunca van en el código)
-# ---------------------------------------------------------------------
-FD_TOKEN     = os.environ.get("FOOTBALL_DATA_TOKEN")
-SB_URL       = os.environ.get("SUPABASE_URL")          # https://xxxx.supabase.co
-SB_KEY       = os.environ.get("SUPABASE_SERVICE_KEY")  # clave service_role (secreta)
+FD_TOKEN = os.environ.get("FOOTBALL_DATA_TOKEN")
+SB_URL   = os.environ.get("SUPABASE_URL")
+SB_KEY   = os.environ.get("SUPABASE_SERVICE_KEY")
 
 missing = [k for k, v in {
     "FOOTBALL_DATA_TOKEN": FD_TOKEN,
@@ -26,84 +23,82 @@ missing = [k for k, v in {
     "SUPABASE_SERVICE_KEY": SB_KEY,
 }.items() if not v]
 if missing:
-    sys.exit(f"❌ Faltan secretos: {', '.join(missing)}")
+    sys.exit(f"\u274c Faltan secretos: {', '.join(missing)}")
 
-# ---------------------------------------------------------------------
-# 2) Qué partidos nos interesan
-#    Tomamos TODO lo que NO sea fase de grupos = los playoffs.
-#    (Así no dependemos del nombre exacto que use la API para 16avos.)
-# ---------------------------------------------------------------------
+FD_HEADERS = {"X-Auth-Token": FD_TOKEN}
+SB_HEADERS = {
+    "apikey": SB_KEY,
+    "Authorization": f"Bearer {SB_KEY}",
+    "Content-Type": "application/json",
+    "Prefer": "resolution=merge-duplicates,return=minimal",
+}
 EXCLUIR = {"GROUP_STAGE", "LEAGUE_STAGE"}
+
 
 def mapear_estado(api_status: str) -> str:
     if api_status in ("FINISHED", "AWARDED"):
         return "FINISHED"
     if api_status in ("IN_PLAY", "PAUSED", "SUSPENDED"):
         return "IN_PLAY"
-    return "SCHEDULED"  # SCHEDULED, TIMED, POSTPONED, CANCELLED, etc.
+    return "SCHEDULED"
+
+
+def upsert(tabla, filas, conflict):
+    if not filas:
+        return
+    r = requests.post(
+        f"{SB_URL}/rest/v1/{tabla}?on_conflict={conflict}",
+        headers=SB_HEADERS, json=filas, timeout=30,
+    )
+    if r.status_code >= 300:
+        sys.exit(f"\u274c Supabase ({tabla}) devolvio {r.status_code}: {r.text[:300]}")
+
 
 # ---------------------------------------------------------------------
-# 3) Bajar los partidos del Mundial (competición "WC")
+#  1) PARTIDOS DE PLAYOFFS
 # ---------------------------------------------------------------------
-print("⬇️  Bajando partidos del Mundial desde football-data.org...")
-resp = requests.get(
-    "https://api.football-data.org/v4/competitions/WC/matches",
-    headers={"X-Auth-Token": FD_TOKEN},
-    timeout=30,
-)
+print("\u2b07\ufe0f  Bajando partidos...")
+resp = requests.get("https://api.football-data.org/v4/competitions/WC/matches",
+                    headers=FD_HEADERS, timeout=30)
 if resp.status_code != 200:
-    sys.exit(f"❌ football-data devolvió {resp.status_code}: {resp.text[:300]}")
+    sys.exit(f"\u274c football-data (matches) {resp.status_code}: {resp.text[:300]}")
 
-partidos = resp.json().get("matches", [])
-print(f"   {len(partidos)} partidos en total en el torneo.")
-
-# ---------------------------------------------------------------------
-# 4) Armar las filas para Supabase (solo playoffs)
-#    OJO: usamos score.fullTime = marcador a los 120 min, SIN penales.
-#    Los penales van aparte en la API, así que un 1-1 que se define por
-#    penales se guarda como 1-1 (empate), tal como querés.
-# ---------------------------------------------------------------------
 filas = []
-for m in partidos:
+for m in resp.json().get("matches", []):
     stage = m.get("stage")
     if stage in EXCLUIR:
         continue
-
-    score_ft = (m.get("score") or {}).get("fullTime") or {}
-
+    ft = (m.get("score") or {}).get("fullTime") or {}
     filas.append({
         "external_id": m["id"],
-        "round":       stage,
-        "home_team":   (m.get("homeTeam") or {}).get("name"),
-        "away_team":   (m.get("awayTeam") or {}).get("name"),
-        "kickoff":     m["utcDate"],
-        "home_score":  score_ft.get("home"),
-        "away_score":  score_ft.get("away"),
-        "status":      mapear_estado(m.get("status", "SCHEDULED")),
+        "round": stage,
+        "home_team": (m.get("homeTeam") or {}).get("name"),
+        "away_team": (m.get("awayTeam") or {}).get("name"),
+        "kickoff": m["utcDate"],
+        "home_score": ft.get("home"),
+        "away_score": ft.get("away"),
+        "status": mapear_estado(m.get("status", "SCHEDULED")),
     })
 
-print(f"   {len(filas)} partidos de playoffs para guardar.")
-if not filas:
-    print("ℹ️  Todavía no hay partidos de playoffs publicados. Nada que hacer.")
-    sys.exit(0)
+upsert("matches", filas, "external_id")
+print(f"   {len(filas)} partidos de playoffs sincronizados.")
 
 # ---------------------------------------------------------------------
-# 5) Subir a Supabase (UPSERT por external_id: inserta o actualiza)
+#  2) EQUIPOS DEL TORNEO
 # ---------------------------------------------------------------------
-print("⬆️  Subiendo a Supabase...")
-up = requests.post(
-    f"{SB_URL}/rest/v1/matches?on_conflict=external_id",
-    headers={
-        "apikey": SB_KEY,
-        "Authorization": f"Bearer {SB_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates,return=minimal",
-    },
-    json=filas,
-    timeout=30,
-)
-if up.status_code >= 300:
-    sys.exit(f"❌ Supabase devolvió {up.status_code}: {up.text[:300]}")
+print("\u2b07\ufe0f  Bajando equipos...")
+tresp = requests.get("https://api.football-data.org/v4/competitions/WC/teams",
+                     headers=FD_HEADERS, timeout=30)
+if tresp.status_code == 200:
+    trows = [{
+        "id": t["id"],
+        "name": t["name"],
+        "tla": t.get("tla"),
+        "crest": t.get("crest"),
+    } for t in tresp.json().get("teams", [])]
+    upsert("teams", trows, "id")
+    print(f"   {len(trows)} equipos sincronizados.")
+else:
+    print(f"   \u26a0\ufe0f No se pudieron bajar equipos ({tresp.status_code}). Sigo igual.")
 
-terminados = sum(1 for f in filas if f["status"] == "FINISHED")
-print(f"✅ Listo. {len(filas)} partidos sincronizados ({terminados} terminados).")
+print("\u2705 Listo.")
