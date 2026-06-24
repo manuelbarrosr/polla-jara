@@ -1,0 +1,29 @@
+name: Actualizar polla mundial
+
+# Cuándo corre el robot:
+on:
+  schedule:
+    - cron: "*/15 * * * *"   # cada 15 minutos (hora UTC; GitHub puede demorar unos minutos)
+  workflow_dispatch: {}       # botón para correrlo a mano cuando quieras
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r robot/requirements.txt
+
+      - name: Correr el robot
+        env:
+          FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python robot/fetch_results.py
