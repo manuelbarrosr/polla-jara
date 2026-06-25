@@ -3,7 +3,7 @@ name: Actualizar polla mundial
 # Cuándo corre el robot:
 on:
   schedule:
-    - cron: "*/15 * * * *"   # cada 15 minutos (hora UTC; GitHub puede demorar unos minutos)
+    - cron: "*/5 * * * *"   # cada 15 minutos (hora UTC; GitHub puede demorar unos minutos)
   workflow_dispatch: {}       # botón para correrlo a mano cuando quieras
 
 jobs:
