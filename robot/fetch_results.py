@@ -116,6 +116,32 @@ if not filas:
     sys.exit(0)
 
 # ---------------------------------------------------------------------
+# 4b) ANTI-PARPADEO de la llave
+#     Mientras la fase de grupos no termina, football-data (plan gratis)
+#     a veces devuelve los cruces de playoffs con equipo y a veces en
+#     blanco (TBD). Para que un equipo YA conocido no se borre y vuelva a
+#     "Por definir", nunca pisamos un home_team/away_team que ya existe en
+#     la base con un valor vacío que llegó de la API en este ciclo.
+# ---------------------------------------------------------------------
+ex = requests.get(
+    f"{SB_URL}/rest/v1/matches?select=external_id,home_team,away_team",
+    headers={"apikey": SB_KEY, "Authorization": f"Bearer {SB_KEY}"},
+    timeout=30,
+)
+existentes = {row["external_id"]: row for row in (ex.json() if ex.status_code == 200 else [])}
+conservados = 0
+for f in filas:
+    cur = existentes.get(f["external_id"])
+    if not cur:
+        continue
+    if not f["home_team"] and cur.get("home_team"):
+        f["home_team"] = cur["home_team"]; conservados += 1
+    if not f["away_team"] and cur.get("away_team"):
+        f["away_team"] = cur["away_team"]; conservados += 1
+if conservados:
+    print(f"   🛡️  {conservados} equipos ya conocidos se conservaron (la API los mandó vacíos).")
+
+# ---------------------------------------------------------------------
 # 5) Subir a Supabase (UPSERT por external_id: inserta o actualiza)
 # ---------------------------------------------------------------------
 print("⬆️  Subiendo a Supabase...")
