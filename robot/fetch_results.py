@@ -43,7 +43,7 @@ EXCLUIR = {"GROUP_STAGE", "LEAGUE_STAGE"}
 #     (los marcamos con round='GROUP_STAGE' -> pestaña "Testeo" en la web).
 #     Para volver a producción: poner TEST_GROUPS = False (o borrar este bloque).
 # ---------------------------------------------------------------------
-TEST_GROUPS = True
+TEST_GROUPS = False
 # Solo grupos cuyo kickoff sea de hace <= 2 días en adelante (evita traer los 72)
 GROUP_CUTOFF = datetime.now(timezone.utc) - timedelta(days=2)
 
