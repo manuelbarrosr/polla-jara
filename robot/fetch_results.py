@@ -77,9 +77,11 @@ print(f"   {len(partidos)} partidos en total en el torneo.")
 
 # ---------------------------------------------------------------------
 # 4) Armar las filas para Supabase (solo playoffs)
-#    OJO: usamos score.fullTime = marcador a los 120 min, SIN penales.
-#    Los penales van aparte en la API, así que un 1-1 que se define por
-#    penales se guarda como 1-1 (empate), tal como querés.
+#    OJO: para la polla cuenta el marcador de los 120 min (SIN penales).
+#    En football-data, si hubo tanda de penales, score.fullTime YA los
+#    incluye (ej: 1-1 + penales 3-4 -> fullTime 4-5). Por eso, cuando la
+#    duración es PENALTY_SHOOTOUT, restamos score.penalties para quedarnos
+#    con el 1-1 (empate), tal como corresponde.
 # ---------------------------------------------------------------------
 filas = []
 for m in partidos:
@@ -95,7 +97,18 @@ for m in partidos:
         if ko is None or ko < GROUP_CUTOFF:
             continue
 
-    score_ft = (m.get("score") or {}).get("fullTime") or {}
+    score = m.get("score") or {}
+    ft = score.get("fullTime") or {}
+    home_sc = ft.get("home")
+    away_sc = ft.get("away")
+    # Si se definió por PENALES, fullTime los incluye -> los restamos para
+    # quedarnos con el marcador de los 120 min (lo que cuenta para la polla).
+    if score.get("duration") == "PENALTY_SHOOTOUT":
+        pen = score.get("penalties") or {}
+        if home_sc is not None and pen.get("home") is not None:
+            home_sc -= pen["home"]
+        if away_sc is not None and pen.get("away") is not None:
+            away_sc -= pen["away"]
 
     filas.append({
         "external_id": m["id"],
@@ -103,8 +116,8 @@ for m in partidos:
         "home_team":   (m.get("homeTeam") or {}).get("name"),
         "away_team":   (m.get("awayTeam") or {}).get("name"),
         "kickoff":     m["utcDate"],
-        "home_score":  score_ft.get("home"),
-        "away_score":  score_ft.get("away"),
+        "home_score":  home_sc,
+        "away_score":  away_sc,
         "status":      mapear_estado(m.get("status", "SCHEDULED")),
     })
 
