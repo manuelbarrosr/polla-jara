@@ -137,11 +137,29 @@ if not filas:
 #     la base con un valor vacío que llegó de la API en este ciclo.
 # ---------------------------------------------------------------------
 ex = requests.get(
-    f"{SB_URL}/rest/v1/matches?select=external_id,home_team,away_team",
+    f"{SB_URL}/rest/v1/matches?select=external_id,home_team,away_team,locked",
     headers={"apikey": SB_KEY, "Authorization": f"Bearer {SB_KEY}"},
     timeout=30,
 )
 existentes = {row["external_id"]: row for row in (ex.json() if ex.status_code == 200 else [])}
+
+# ---------------------------------------------------------------------
+# 4c) CANDADO MANUAL (locked = true)
+#     Si un partido fue corregido a mano en la base (ej: football-data
+#     trajo mal el marcador de los 120'), lo marcamos locked=true y el
+#     robot NO lo toca: lo sacamos de la subida para no pisar el dato.
+# ---------------------------------------------------------------------
+locked_ids = {eid for eid, row in existentes.items() if row.get("locked")}
+if locked_ids:
+    antes = len(filas)
+    filas = [f for f in filas if f["external_id"] not in locked_ids]
+    saltados = antes - len(filas)
+    if saltados:
+        print(f"   🔒 {saltados} partido(s) bloqueado(s) manualmente: no se tocan.")
+if not filas:
+    print("ℹ️  No quedan partidos para actualizar (todos bloqueados o sin datos).")
+    sys.exit(0)
+
 conservados = 0
 for f in filas:
     cur = existentes.get(f["external_id"])
